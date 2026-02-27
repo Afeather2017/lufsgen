@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "lufsgen-android"
 version = "0.1.0"
@@ -12,10 +14,8 @@ name = "lufsgen"
 path = "src/main.rs"
 
 [dependencies]
-# Audio decoders (pure Rust, no audio output deps)
-minimp3 = "0.5"
-lewton = "0.10"
-hound = "3.5"
+# Audio decoder - unified multimedia framework
+symphonia = { version = "0.5", features = ["mp3", "ogg", "flac", "aac", "isomp4", "wav"] }
 
 ebur128 = "0.1"
 

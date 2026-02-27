@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use crate::error::{LufsError, Result};
-use crate::decoders::{AudioDecoder, AudioFormat, create_decoder};
+use crate::decoders::{AudioDecoder, create_decoder};
 
 /// Progress callback type - receives (bytes_read, total_bytes)
 pub type ProgressCallback = Arc<AtomicU64>;
@@ -85,95 +85,46 @@ impl LufsCalculator {
             )));
         }
 
-        // Detect format from extension
-        let format = match AudioFormat::from_path(path) {
-            Some(f) => f,
-            None => return Ok(None),
-        };
+        // Check if file has supported extension (fast path)
+        let ext = path.extension().and_then(|e| e.to_str());
+        if let Some(ext_str) = ext {
+            let ext_lower = ext_str.to_lowercase();
+            if !crate::SUPPORTED_EXTENSIONS.contains(&ext_lower.as_str()) {
+                return Ok(None);
+            }
+        }
 
         // Get file size for progress tracking
         let file_size = std::fs::metadata(path).ok().map(|m| m.len());
 
         // Open file
         let file = File::open(path)?;
-        self.calculate_from_reader_with_progress(file, format, file_size, progress)
+        self.calculate_from_reader_with_progress(file, file_size, progress)
     }
 
-    /// Calculate LUFS from a generic reader with explicit format and progress
-    pub fn calculate_from_reader_with_progress<R: Read + 'static>(
-        &self,
-        reader: R,
-        format: AudioFormat,
-        file_size: Option<u64>,
-        progress: Option<ProgressCallback>,
-    ) -> Result<Option<f64>> {
-        // For MP3 with progress, use the specialized decoder
-        if format == AudioFormat::Mp3 && progress.is_some() {
-            use crate::decoders::mp3::Mp3Decoder;
-
-            let mp3_decoder = Mp3Decoder::new_with_progress(reader, file_size, progress)?;
-            let mut decoder: Box<dyn AudioDecoder> = Box::new(mp3_decoder);
-
-            // Initialize EBU R128 loudness meter
-            let mut ebur = ebur128::EbuR128::new(
-                decoder.channels(),
-                decoder.sample_rate(),
-                ebur128::Mode::I,
-            )
-            .map_err(|e| LufsError::EbuR128Error(format!("Failed to create EBU R128: {:?}", e)))?;
-
-            // Process audio in chunks
-            self.calculate_with_decoder(&mut decoder, &mut ebur)?;
-
-            // Get the loudness value
-            let loudness = ebur
-                .loudness_global()
-                .map_err(|e| LufsError::EbuR128Error(format!("Failed to get loudness: {:?}", e)))?;
-
-            return Ok(Some(loudness));
-        }
-
-        // Fall back to default path for other formats or no progress
-        let mut decoder = create_decoder(reader, format)?;
-
-        // Initialize EBU R128 loudness meter
-        let mut ebur = ebur128::EbuR128::new(
-            decoder.channels(),
-            decoder.sample_rate(),
-            ebur128::Mode::I,
-        )
-        .map_err(|e| LufsError::EbuR128Error(format!("Failed to create EBU R128: {:?}", e)))?;
-
-        // Process audio in chunks
-        self.calculate_with_decoder(&mut decoder, &mut ebur)?;
-
-        // Get the loudness value
-        let loudness = ebur
-            .loudness_global()
-            .map_err(|e| LufsError::EbuR128Error(format!("Failed to get loudness: {:?}", e)))?;
-
-        Ok(Some(loudness))
-    }
-
-    /// Calculate LUFS from a generic reader with explicit format
+    /// Calculate LUFS from a generic reader with progress reporting
     ///
     /// # Arguments
     ///
-    /// * `reader` - Any type implementing Read (File, Cursor, TcpStream, etc.)
-    /// * `format` - Audio format (must match the data)
+    /// * `reader` - Any type implementing Read (File, Cursor, etc.)
+    /// * `file_size` - Optional file size for progress tracking
+    /// * `progress` - Optional AtomicU64 that will be updated with bytes read
     ///
     /// # Returns
     ///
     /// * `Ok(Some(lufs))` - LUFS value in dB
     /// * `Ok(None)` - Format not supported
     /// * `Err(...)` - Error occurred
-    pub fn calculate_from_reader<R: Read + 'static>(
+    ///
+    /// Note: Format is automatically detected from stream content.
+    pub fn calculate_from_reader_with_progress<R: Read + 'static>(
         &self,
         reader: R,
-        format: AudioFormat,
+        file_size: Option<u64>,
+        progress: Option<ProgressCallback>,
     ) -> Result<Option<f64>> {
-        // Create decoder
-        let mut decoder = create_decoder(reader, format)?;
+        // Create decoder with automatic format detection
+        let mut decoder = create_decoder(reader)?;
 
         // Initialize EBU R128 loudness meter
         let mut ebur = ebur128::EbuR128::new(
@@ -186,12 +137,37 @@ impl LufsCalculator {
         // Process audio in chunks
         self.calculate_with_decoder(&mut decoder, &mut ebur)?;
 
+        // Update progress to completion if tracking
+        if let (Some(size), Some(prog)) = (file_size, progress) {
+            prog.store(size, std::sync::atomic::Ordering::Relaxed);
+        }
+
         // Get the loudness value
         let loudness = ebur
             .loudness_global()
             .map_err(|e| LufsError::EbuR128Error(format!("Failed to get loudness: {:?}", e)))?;
 
         Ok(Some(loudness))
+    }
+
+    /// Calculate LUFS from a generic reader
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - Any type implementing Read (File, Cursor, TcpStream, etc.)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(lufs))` - LUFS value in dB
+    /// * `Ok(None)` - Format not supported
+    /// * `Err(...)` - Error occurred
+    ///
+    /// Note: Format is automatically detected from stream content.
+    pub fn calculate_from_reader<R: Read + 'static>(
+        &self,
+        reader: R,
+    ) -> Result<Option<f64>> {
+        self.calculate_from_reader_with_progress(reader, None, None)
     }
 
     /// Internal method: Calculate LUFS using a decoder
