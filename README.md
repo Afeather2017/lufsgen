@@ -1,60 +1,50 @@
 # LUFS Generator for Android
 
-Cross-compiled Rust binary that calculates LUFS (Loudness Units Full Scale) for audio files on Android using FFmpeg libraries.
+Cross-compiled Rust binary that calculates LUFS (Loudness Units Full Scale) for audio files on Android using streaming audio decoders.
 
 ## Prerequisites
 
-- Android NDK 29.0.13846066 installed
+- Android NDK (tested with 23.2.8568313)
 - Rust toolchain
-- FFmpeg source code in `./FFmpeg` directory
-- MSYS2/MinGW for running shell scripts on Windows (optional)
 
 ## Build Steps
 
-### Step 1: Build FFmpeg for Android ARM64
+### Step 1: Set environment variables
 
-Run in Windows Command Prompt:
-```cmd
-cd E:\fa
-build_ffmpeg_android.bat
-```
-
-Or in Git Bash/MSYS2:
 ```bash
-cd /e/fa
-./build_ffmpeg_android.sh
+export NDK_HOME=/path/to/android-ndk
+export CC_aarch64_linux_android=${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
 ```
-
-Output: `./install/arm64-v8a/lib/*.so` (FFmpeg shared libraries)
 
 ### Step 2: Build Rust Binary
 
-```cmd
-cargo build --target aarch64-linux-android --release
+```bash
+cargo build --release --target aarch64-linux-android
 ```
 
 The binary will be at: `target/aarch64-linux-android/release/lufsgen`
 
 ### Step 3: Deploy to Android
 
-```cmd
+```bash
+scp -P 8022 target/aarch64-linux-android/release/lufsgen 192.168.136.29:~/
+# or with adb
 adb push target/aarch64-linux-android/release/lufsgen /data/local/tmp/
-adb push install/arm64-v8a/lib/*.so /data/local/tmp/
 adb shell chmod 755 /data/local/tmp/lufsgen
 ```
 
 ### Step 4: Run on Android
 
-```cmd
+```bash
 # Calculate LUFS for a single file
-adb shell /data/local/tmp/lufsgen /sdcard/music.mp3
+~/lufsgen /sdcard/music.mp3
 
 # Scan a directory
-adb shell /data/local/tmp/lufsgen /sdcard/Music
+~/lufsgen /sdcard/Music
 
 # Save results to file
-adb shell "/data/local/tmp/lufsgen /sdcard/Music /sdcard/lufs_results.txt"
-adb pull /sdcard/lufs_results.txt
+~/lufsgen /sdcard/Music /sdcard/lufs_results.txt
 ```
 
 ## Usage
@@ -77,39 +67,56 @@ track2.wav|-10.3
 
 - MP3 (`.mp3`)
 - WAV (`.wav`)
-- AAC (`.aac`, `.m4a`)
-- OGG (`.ogg`)
+- AAC (`.aac`, `.m4a`, `.mp4`)
+- OGG (`.ogg`, `.oga`)
 - FLAC (`.flac`)
+
+## How It Works
+
+This project uses Symphonia, a pure Rust multimedia framework, to decode audio files. The streaming decoder:
+1. Auto-detects audio format from file content (not just extension)
+2. Decodes audio chunk-by-chunk (8192 samples per chunk)
+3. Feeds samples to EBU R128 loudness analyzer
+4. Returns the integrated LUFS value
+
+This approach is memory-efficient and suitable for mobile devices.
+
+## Desktop Testing
+
+```bash
+cargo build --release
+cargo run --release -- /path/to/music.mp3
+```
 
 ## Troubleshooting
 
 ### Build fails
 
-Make sure FFmpeg libraries are built first:
-```cmd
-ls install/arm64-v8a/lib
-```
-
-Should show: `libavcodec.so`, `libavformat.so`, `libavutil.so`, `libavfilter.so`, `libswresample.so`, `libswscale.so`
-
-### Runtime error: library not found
-
-Make sure all FFmpeg `.so` files are in the same directory as the `lufsgen` binary on Android:
-```cmd
-adb shell ls /data/local/tmp/*.so
+Make sure the NDK path is correct and the clang compiler exists:
+```bash
+ls ${NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
 ```
 
 ### Permission denied
 
 Make the binary executable:
-```cmd
+```bash
 adb shell chmod 755 /data/local/tmp/lufsgen
 ```
 
-## Desktop Testing (Optional)
+## Library Usage
 
-Install FFmpeg for Windows, then:
-```cmd
-cargo build --release
-cargo run --release -- theme_of_seliana.mp3
+This is also a library that can be used in other Rust projects:
+
+```rust
+use lufsgen::{LufsCalculator, is_audio_file};
+
+// Check if file is supported
+if is_audio_file("song.mp3") {
+    // Calculate LUFS
+    let lufs = LufsCalculator::new().calculate_from_file("song.mp3")?;
+    println!("LUFS: {}", lufs);
+}
 ```
+
+See `lib.rs` for the full API documentation.
