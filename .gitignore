@@ -1,0 +1,35 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock file (optional - remove if you want to commit it)
+# Cargo.lock
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# FFmpeg source (not needed for pure Rust build)
+FFmpeg/
+
+# Build scripts
+build_ffmpeg_android.bat
+build_ffmpeg_android.sh
+
+# Test files
+*.mp3
+*.wav
+*.ogg
+*.flac
+
+# Claude AI
+.claude/
+
+# Old unused files
+lufsgen.rs
+examples/
