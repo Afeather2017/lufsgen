@@ -1,0 +1,6 @@
+[target.aarch64-linux-android]
+ar = "C:/Users/Administrator/AppData/Local/Android/Sdk/ndk/29.0.13846066/toolchains/llvm/prebuilt/windows-x86_64/bin/llvm-ar.cmd"
+linker = "C:/Users/Administrator/AppData/Local/Android/Sdk/ndk/29.0.13846066/toolchains/llvm/prebuilt/windows-x86_64/bin/aarch64-linux-android29-clang.cmd"
+
+[build]
+target-dir = "target"

@@ -1,0 +1,16 @@
+[package]
+name = "lufsgen-android"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "lufsgen"
+path = "src/main.rs"
+
+[dependencies]
+# Audio decoders (pure Rust, no audio output deps)
+minimp3 = "0.5"
+lewton = "0.10"
+hound = "3.5"
+
+ebur128 = "0.1"
