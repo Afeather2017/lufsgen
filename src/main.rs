@@ -1,6 +1,5 @@
 //! LUFS Generator for Android - Pure Rust
 //! Calculates LUFS (Loudness Units Full Scale) for audio files
-//! Uses individual decoder crates and ebur128 for loudness measurement
 //!
 //! Usage on Android:
 //! adb push lufsgen /data/local/tmp/
@@ -10,175 +9,204 @@
 use std::env;
 use std::path::Path;
 use std::fs;
-use std::io::BufReader;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::Duration;
 
-/// Audio file extensions supported for LUFS analysis
-const SUPPORTED_EXTENSIONS: &[&str] = &["wav", "mp3", "ogg"];
+// Use the library
+use lufsgen_android::{LufsCalculator, LufsResult, is_audio_file};
 
-/// Represents LUFS analysis result
-#[derive(Debug, Clone)]
-struct LufsResult {
-    filename: String,
-    path: String,
-    lufs: Option<f64>,
-}
+/// Process a single file and return its result
+fn process_single_file(path: &Path) -> LufsResult {
+    let filename = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
 
-/// Calculate LUFS for a single audio file using pure Rust libraries
-fn get_lufs(file_path: &Path) -> Result<Option<f64>, String> {
-    // Check if file exists
-    if !file_path.exists() {
-        return Err(format!("File does not exist: {}", file_path.display()));
+    let path_str = path.to_string_lossy().to_string();
+
+    // Get file size for progress bar
+    let file_size = fs::metadata(path)
+        .ok()
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    // Show file info
+    if file_size > 1024 * 1024 {
+        eprintln!("[LUFS] Processing: {} ({:.1} MB)", filename, file_size as f64 / 1024.0 / 1024.0);
+    } else {
+        eprintln!("[LUFS] Processing: {}", filename);
     }
 
-    let extension = file_path.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    if !SUPPORTED_EXTENSIONS.contains(&extension.as_str()) {
-        return Ok(None);
-    }
-
-    eprintln!("[LUFS] Processing: {}", file_path.display());
-
-    // Decode based on extension
-    let (sample_rate, channels, samples_i16): (u32, u32, Vec<i16>) = match extension.as_str() {
-        "mp3" => decode_mp3(file_path)?,
-        "ogg" => decode_ogg(file_path)?,
-        "wav" => decode_wav(file_path)?,
-        _ => return Ok(None),
+    // Set up progress tracking for files larger than 1MB
+    let progress = if file_size > 1024 * 1024 {
+        Some(Arc::new(AtomicU64::new(0)))
+    } else {
+        None
     };
 
-    // Initialize EBU R128 loudness meter
-    let mut ebur = match ebur128::EbuR128::new(channels, sample_rate, ebur128::Mode::I) {
-        Ok(e) => e,
-        Err(e) => return Err(format!("Failed to create EBU R128: {:?}", e)),
+    // Spawn progress bar thread if we have progress tracking
+    let progress_clone = progress.clone();
+    let handle = if progress.is_some() {
+        let filename_clone = filename.clone();
+        Some(thread::spawn(move || {
+            show_file_progress(&filename_clone, file_size, progress_clone.unwrap());
+        }))
+    } else {
+        None
     };
 
-    // Convert i16 to f32 in range [-1.0, 1.0]
-    let samples: Vec<f32> = samples_i16.iter()
-        .map(|&s| s as f32 / 32768.0)
-        .collect();
+    let calc = LufsCalculator::default();
+    let lufs = match calc.calculate_from_file_with_progress(path, progress) {
+        Ok(result) => result,
+        Err(e) => {
+            eprintln!("Error processing {}: {}", filename, e);
+            None
+        }
+    };
 
-    // Feed to EBU R128
-    if let Err(e) = ebur.add_frames_f32(&samples) {
-        return Err(format!("EBU R128 processing error: {:?}", e));
+    // Wait for progress thread to finish
+    if let Some(h) = handle {
+        let _ = h.join();
+        eprintln!(); // New line after progress bar
     }
 
-    // Get the loudness value
-    let loudness = ebur.loudness_global()
-        .map_err(|e| format!("Failed to get loudness: {:?}", e))?;
-
-    eprintln!("[LUFS] {} - LUFS: {:.2}", file_path.display(), loudness);
-
-    Ok(Some(loudness))
+    LufsResult { filename, path: path_str, lufs }
 }
 
-/// Decode MP3 using minimp3
-fn decode_mp3(path: &Path) -> Result<(u32, u32, Vec<i16>), String> {
-    let data = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
-    let mut decoder = minimp3::Decoder::new(&data[..]);
-    let mut samples = Vec::new();
-    let mut sample_rate = 44100; // default
+/// Show progress bar for a single file
+fn show_file_progress(filename: &str, total_size: u64, progress: Arc<AtomicU64>) {
+    use indicatif::{ProgressBar, ProgressStyle};
 
+    let pb = ProgressBar::new(total_size);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("  [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({percent}%) {msg}")
+            .expect("invalid template")
+            .progress_chars("##-")
+    );
+    pb.set_message(filename.to_string());
+
+    let mut last_bytes = 0;
     loop {
-        match decoder.next_frame() {
-            Ok(frame) => {
-                sample_rate = frame.sample_rate as u32;
-                samples.extend_from_slice(&frame.data);
-            }
-            Err(minimp3::Error::Eof) => break,
-            Err(e) => return Err(format!("MP3 decode error: {:?}", e)),
+        let bytes_read = progress.load(Ordering::Relaxed);
+
+        if bytes_read >= total_size {
+            pb.finish();
+            break;
+        }
+
+        pb.set_position(bytes_read);
+
+        // Check if we're making progress
+        if bytes_read == last_bytes {
+            // No progress for 100ms - might be stuck or finished
+            thread::sleep(Duration::from_millis(100));
+        } else {
+            last_bytes = bytes_read;
+            thread::sleep(Duration::from_millis(50));
         }
     }
-
-    Ok((sample_rate, 2, samples)) // MP3 is typically stereo
 }
 
-/// Decode OGG/Vorbis using lewton
-fn decode_ogg(path: &Path) -> Result<(u32, u32, Vec<i16>), String> {
-    let file = fs::File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
-    let mut reader = BufReader::new(file);
+/// Recursively scan a directory for audio files and process them
+fn process_directory(root_dir: &Path) -> Vec<LufsResult> {
+    eprintln!("Scanning: {}", root_dir.display());
 
-    let mut decoder = lewton::inside_ogg::OggStreamReader::new(&mut reader)
-        .map_err(|e| format!("Failed to create OGG reader: {}", e))?;
+    // First, collect all audio files
+    let mut audio_files = Vec::new();
+    collect_audio_files(root_dir, &mut audio_files);
 
-    let sample_rate = decoder.ident_hdr.audio_sample_rate;
-    let channels = decoder.ident_hdr.audio_channels as u32;
-    let mut samples = Vec::new();
-
-    while let Ok(Some(packet)) = decoder.read_dec_packet_itl() {
-        samples.extend(packet);
+    let total = audio_files.len();
+    if total == 0 {
+        eprintln!("No audio files found.");
+        return Vec::new();
     }
 
-    Ok((sample_rate, channels, samples))
-}
+    eprintln!("Found {} audio file(s)", total);
 
-/// Decode WAV using hound
-fn decode_wav(path: &Path) -> Result<(u32, u32, Vec<i16>), String> {
-    let reader = hound::WavReader::open(path)
-        .map_err(|e| format!("Failed to open WAV: {}", e))?;
+    // Set up progress bar
+    use indicatif::{ProgressBar, ProgressStyle};
+    let progress = ProgressBar::new(total as u64);
+    progress.set_style(
+        ProgressStyle::default_bar()
+            .template("[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
+            .expect("invalid template")
+            .progress_chars("##-")
+    );
 
-    let spec = reader.spec();
-    let sample_rate = spec.sample_rate;
-    let channels = spec.channels as u32;
-
-    let samples: Vec<i16> = reader.into_samples()
-        .filter_map(|s| s.ok())
-        .collect();
-
-    Ok((sample_rate, channels, samples))
-}
-
-/// Check if a file has supported audio extension
-fn is_audio_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .map(|ext| SUPPORTED_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-        .unwrap_or(false)
-}
-
-/// Scan directory recursively for audio files and generate LUFS data
-fn scan_and_generate_lufs(root_dir: &Path) -> Vec<LufsResult> {
-    eprintln!("Scanning: {}", root_dir.display());
     let mut results = Vec::new();
 
-    let entries = match fs::read_dir(root_dir) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("Failed to read directory: {}", e);
-            return results;
-        }
-    };
+    for path in audio_files {
+        let filename = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
 
-    for entry in entries.flatten() {
-        let path = entry.path();
+        progress.set_message(filename.clone());
 
-        if path.is_file() {
-            if is_audio_file(&path) {
-                let filename = path.file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-
-                let path_str = path.to_string_lossy().to_string();
-                let lufs = get_lufs(&path).unwrap_or(None);
-
-                results.push(LufsResult {
-                    filename,
-                    path: path_str,
-                    lufs,
-                });
+        let calc = LufsCalculator::default();
+        let lufs = match calc.calculate_from_file(&path) {
+            Ok(result) => result,
+            Err(e) => {
+                eprintln!("\nError: {}", e);
+                None
             }
-        } else if path.is_dir() {
-            let mut sub_results = scan_and_generate_lufs(&path);
-            results.append(&mut sub_results);
-        }
+        };
+
+        let path_str = path.to_string_lossy().to_string();
+        results.push(LufsResult { filename, path: path_str, lufs });
+
+        progress.inc(1);
     }
+
+    progress.finish();
+    eprintln!(); // New line after progress bar
 
     results
 }
 
+/// Collect all audio files recursively
+fn collect_audio_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && is_audio_file(&path) {
+                files.push(path);
+            } else if path.is_dir() {
+                collect_audio_files(&path, files);
+            }
+        }
+    }
+}
+
+/// Output results to stdout
+fn output_results(results: &[LufsResult]) {
+    for result in results {
+        match result.lufs {
+            Some(lufs) => println!("{}|{}", result.filename, lufs),
+            None => println!("{}|FAILED", result.filename),
+        }
+    }
+}
+
+/// Write results to file
+fn write_results(results: &[LufsResult], output_path: &str) -> std::io::Result<()> {
+    let mut content = String::new();
+
+    for result in results {
+        if let Some(lufs) = result.lufs {
+            content.push_str(&format!("{}: {:.2} LUFS\n", result.filename, lufs));
+        }
+    }
+
+    fs::write(output_path, content)
+}
+
+/// Print usage information
 fn print_usage() {
     println!("LUFS Generator for Android (Pure Rust)");
     println!();
@@ -204,43 +232,21 @@ fn main() {
     let input = Path::new(&args[1]);
 
     let results = if input.is_file() {
-        let filename = input.file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-
-        let lufs = match get_lufs(input) {
-            Ok(result) => result,
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-        };
-
-        vec![LufsResult {
-            filename,
-            path: args[1].clone(),
-            lufs,
-        }]
+        vec![process_single_file(input)]
     } else if input.is_dir() {
-        scan_and_generate_lufs(input)
+        process_directory(input)
     } else {
         eprintln!("Error: Path does not exist: {}", input.display());
         std::process::exit(1);
     };
 
     // Output results to stdout
-    for result in &results {
-        match result.lufs {
-            Some(lufs) => println!("{}|{}", result.filename, lufs),
-            None => println!("{}|FAILED", result.filename),
-        }
-    }
+    output_results(&results);
 
     // Optionally write to file
     if args.len() >= 3 {
         let output_path = &args[2];
-        if let Err(e) = write_lufs_data(&results, output_path) {
+        if let Err(e) = write_results(&results, output_path) {
             eprintln!("Failed to write output: {}", e);
         }
     }
@@ -250,16 +256,4 @@ fn main() {
     if failed > 0 {
         std::process::exit(1);
     }
-}
-
-fn write_lufs_data(results: &[LufsResult], output_path: &str) -> std::io::Result<()> {
-    let mut content = String::new();
-
-    for result in results {
-        if let Some(lufs) = result.lufs {
-            content.push_str(&format!("{}: {:.2} LUFS\n", result.filename, lufs));
-        }
-    }
-
-    fs::write(output_path, content)
 }

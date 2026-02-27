@@ -3,6 +3,10 @@ name = "lufsgen-android"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "lufsgen_android"
+path = "src/lib.rs"
+
 [[bin]]
 name = "lufsgen"
 path = "src/main.rs"
@@ -14,3 +18,6 @@ lewton = "0.10"
 hound = "3.5"
 
 ebur128 = "0.1"
+
+# Progress bar (binary only)
+indicatif = "0.17"
