@@ -15,7 +15,7 @@ use std::thread;
 use std::time::Duration;
 
 // Use the library
-use lufsgen_android::{LufsCalculator, LufsResult, is_audio_file};
+use lufsgen::{LufsCalculator, LufsResult, is_audio_file};
 
 /// Process a single file and return its result
 fn process_single_file(path: &Path) -> LufsResult {
