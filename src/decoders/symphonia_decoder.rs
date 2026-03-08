@@ -3,7 +3,7 @@
 //! Supports MP3, OGG, FLAC, AAC, M4A, MP4, WAV, and more.
 //! Format is detected from stream content (magic bytes), not file extension.
 
-use std::io::{Cursor, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 
 use crate::error::{LufsError, Result};
 use crate::decoders::AudioDecoder;
@@ -16,38 +16,56 @@ use symphonia::core::io::{MediaSource, MediaSourceStream, MediaSourceStreamOptio
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::{Hint};
 
-/// In-memory media source for streaming
-///
-/// Wraps a Cursor to provide seekable access to buffered audio data.
-struct InMemorySource {
-    cursor: Cursor<Vec<u8>>,
+/// Seekable media source wrapper for Symphonia.
+struct SeekableSource<R: Read + Seek + Send + Sync> {
+    reader: R,
+    byte_len: Option<u64>,
 }
 
-impl InMemorySource {
-    fn new(data: Vec<u8>) -> Self {
-        Self { cursor: Cursor::new(data) }
+impl<R: Read + Seek + Send + Sync> SeekableSource<R> {
+    fn new(mut reader: R) -> Result<Self> {
+        let byte_len = Self::detect_len_and_rewind(&mut reader)?;
+        Ok(Self { reader, byte_len })
+    }
+
+    fn detect_len_and_rewind(reader: &mut R) -> Result<Option<u64>> {
+        let current_pos = reader
+            .stream_position()
+            .map_err(LufsError::Io)?;
+        let end_pos = reader
+            .seek(SeekFrom::End(0))
+            .map_err(LufsError::Io)?;
+        reader
+            .seek(SeekFrom::Start(current_pos))
+            .map_err(LufsError::Io)?;
+
+        if end_pos == current_pos {
+            return Err(LufsError::InvalidData("Empty audio file".to_string()));
+        }
+
+        Ok(Some(end_pos))
     }
 }
 
-impl Read for InMemorySource {
+impl<R: Read + Seek + Send + Sync> Read for SeekableSource<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.cursor.read(buf)
+        self.reader.read(buf)
     }
 }
 
-impl Seek for InMemorySource {
+impl<R: Read + Seek + Send + Sync> Seek for SeekableSource<R> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-        self.cursor.seek(pos)
+        self.reader.seek(pos)
     }
 }
 
-impl MediaSource for InMemorySource {
+impl<R: Read + Seek + Send + Sync + 'static> MediaSource for SeekableSource<R> {
     fn is_seekable(&self) -> bool {
         true
     }
 
     fn byte_len(&self) -> Option<u64> {
-        Some(self.cursor.get_ref().len() as u64)
+        self.byte_len
     }
 }
 
@@ -74,17 +92,9 @@ impl SymphoniaDecoder {
     /// This is the recommended way to create a decoder as it detects
     /// the format from the stream content (magic bytes) rather than
     /// relying on file extensions.
-    pub fn new<R: Read>(mut reader: R) -> Result<Self> {
-        // Read all data into memory for seekable access
-        let mut buffer = Vec::new();
-        reader.read_to_end(&mut buffer)?;
-
-        if buffer.is_empty() {
-            return Err(LufsError::InvalidData("Empty audio file".to_string()));
-        }
-
-        // Create a seekable media source from the buffered data
-        let source = Box::new(InMemorySource::new(buffer));
+    pub fn new<R: Read + Seek + Send + Sync + 'static>(reader: R) -> Result<Self> {
+        // Create a seekable media source directly from the reader.
+        let source = Box::new(SeekableSource::new(reader)?);
 
         let mss = MediaSourceStream::new(
             source,
@@ -471,9 +481,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_in_memory_source_is_seekable() {
+    fn test_seekable_source_is_seekable() {
         let data = vec![0u8; 1024];
-        let source = InMemorySource::new(data);
+        let reader = std::io::Cursor::new(data);
+        let source = SeekableSource::new(reader).unwrap();
         assert!(source.is_seekable());
         assert_eq!(source.byte_len(), Some(1024));
     }

@@ -1,7 +1,7 @@
 //! LUFS calculator with streaming audio processing
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -11,6 +11,55 @@ use crate::decoders::{AudioDecoder, create_decoder};
 
 /// Progress callback type - receives (bytes_read, total_bytes)
 pub type ProgressCallback = Arc<AtomicU64>;
+
+/// Reader wrapper that reports read progress in bytes.
+///
+/// Progress is reported as the furthest byte offset reached, which keeps
+/// progress monotonic even if the decoder performs internal seeks.
+struct ProgressReader<R: Read + Seek> {
+    inner: R,
+    progress: ProgressCallback,
+    position: u64,
+    max_position: u64,
+}
+
+impl<R: Read + Seek> ProgressReader<R> {
+    fn new(mut inner: R, progress: ProgressCallback) -> Result<Self> {
+        let position = inner.stream_position().map_err(LufsError::Io)?;
+        progress.store(position, std::sync::atomic::Ordering::Relaxed);
+        Ok(Self {
+            inner,
+            progress,
+            position,
+            max_position: position,
+        })
+    }
+
+    fn report_progress(&mut self) {
+        if self.position > self.max_position {
+            self.max_position = self.position;
+            self.progress
+                .store(self.max_position, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
+impl<R: Read + Seek> Read for ProgressReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let bytes = self.inner.read(buf)?;
+        self.position = self.position.saturating_add(bytes as u64);
+        self.report_progress();
+        Ok(bytes)
+    }
+}
+
+impl<R: Read + Seek> Seek for ProgressReader<R> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        let new_pos = self.inner.seek(pos)?;
+        self.position = new_pos;
+        Ok(new_pos)
+    }
+}
 
 /// LUFS calculation result
 #[derive(Debug, Clone)]
@@ -106,7 +155,7 @@ impl LufsCalculator {
     ///
     /// # Arguments
     ///
-    /// * `reader` - Any type implementing Read (File, Cursor, etc.)
+    /// * `reader` - Any type implementing `Read + Seek` (File, Cursor, etc.)
     /// * `file_size` - Optional file size for progress tracking
     /// * `progress` - Optional AtomicU64 that will be updated with bytes read
     ///
@@ -117,14 +166,19 @@ impl LufsCalculator {
     /// * `Err(...)` - Error occurred
     ///
     /// Note: Format is automatically detected from stream content.
-    pub fn calculate_from_reader_with_progress<R: Read + 'static>(
+    pub fn calculate_from_reader_with_progress<R: Read + Seek + Send + Sync + 'static>(
         &self,
         reader: R,
         file_size: Option<u64>,
         progress: Option<ProgressCallback>,
     ) -> Result<Option<f64>> {
         // Create decoder with automatic format detection
-        let mut decoder = create_decoder(reader)?;
+        let mut decoder = if let Some(progress_ref) = progress.clone() {
+            let progress_reader = ProgressReader::new(reader, progress_ref)?;
+            create_decoder(progress_reader)?
+        } else {
+            create_decoder(reader)?
+        };
 
         // Initialize EBU R128 loudness meter
         let mut ebur = ebur128::EbuR128::new(
@@ -154,7 +208,7 @@ impl LufsCalculator {
     ///
     /// # Arguments
     ///
-    /// * `reader` - Any type implementing Read (File, Cursor, TcpStream, etc.)
+    /// * `reader` - Any type implementing `Read + Seek` (File, Cursor, etc.)
     ///
     /// # Returns
     ///
@@ -163,7 +217,7 @@ impl LufsCalculator {
     /// * `Err(...)` - Error occurred
     ///
     /// Note: Format is automatically detected from stream content.
-    pub fn calculate_from_reader<R: Read + 'static>(
+    pub fn calculate_from_reader<R: Read + Seek + Send + Sync + 'static>(
         &self,
         reader: R,
     ) -> Result<Option<f64>> {

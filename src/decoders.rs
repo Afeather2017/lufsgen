@@ -1,7 +1,7 @@
 //! Audio decoder trait and unified format detection
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::Path;
 
 pub use self::symphonia_decoder::SymphoniaDecoder;
@@ -32,9 +32,8 @@ pub trait AudioDecoder {
 /// - M4A/MP4 (m4a, mp4)
 /// - WAV (wav)
 ///
-/// Note: The reader is consumed and the data is buffered in memory
-/// to support seek operations required by most audio formats.
-pub fn create_decoder<R: Read + 'static>(
+/// Note: Reader input must be seekable because many formats require seeking.
+pub fn create_decoder<R: Read + Seek + Send + Sync + 'static>(
     reader: R,
 ) -> crate::error::Result<Box<dyn AudioDecoder>> {
     Ok(Box::new(SymphoniaDecoder::new(reader)?))

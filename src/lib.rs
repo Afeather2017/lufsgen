@@ -13,7 +13,7 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use lufsgen_android::LufsCalculator;
+//! use lufsgen::LufsCalculator;
 //! use std::path::Path;
 //!
 //! let calc = LufsCalculator::default();
