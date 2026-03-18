@@ -132,7 +132,18 @@ ssh -p 8022 192.168.136.29 "~/lufsgen /path/to/music.mp3"
 | wav | WAV | ✅ | 16-bit PCM |
 | flac | FLAC | ✅ | Lossless |
 | aac | AAC | ✅ | ADTS format |
-| m4a, mp4 | M4A/MP4 | ⚠️ | MP4 container with AAC audio (may fail on DRM-protected files) |
+| m4a, mp4 | M4A/MP4 | ⚠️ | MP4 container with AAC audio (may fail on DRM-protected files or files with metadata at end) |
+
+### M4A/MP4 Format Notes
+
+Some M4A files may fail with "Failed to detect audio format" error. This happens when the MP4 container's `moov` atom (metadata) is placed at the end of the file instead of the beginning. Symphonia's format probe requires metadata at the start.
+
+**Solution**: Convert the file with FFmpeg using the `+faststart` flag to move metadata to the beginning:
+```bash
+ffmpeg -i input.m4a -c:a copy -movflags +faststart output.m4a
+```
+
+The `-c:a copy` flag copies the audio stream without re-encoding (fast, no quality loss), while `-movflags +faststart` optimizes the file for streaming by moving the `moov` atom to the front.
 
 ## Error Handling
 

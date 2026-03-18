@@ -104,6 +104,16 @@ Make the binary executable:
 adb shell chmod 755 /data/local/tmp/lufsgen
 ```
 
+### M4A/MP4 file fails with "Failed to detect audio format"
+
+Some M4A files have metadata (`moov` atom) at the end of the file, which Symphonia cannot detect. Convert the file with FFmpeg to move metadata to the beginning:
+
+```bash
+ffmpeg -i input.m4a -c:a copy -movflags +faststart output.m4a
+```
+
+The `-c:a copy` flag copies the audio without re-encoding (fast, no quality loss). The `-movflags +faststart` flag optimizes for streaming by moving the `moov` atom to the front.
+
 ## Library Usage
 
 This is also a library that can be used in other Rust projects:

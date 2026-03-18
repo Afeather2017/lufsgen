@@ -247,12 +247,14 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
 
-        // Process each plane (channel)
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+        // Interleave channels: LRLRLR... (not planar LLL...RRR...)
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 let i16_sample: i16 = (sample.clamp(-1.0_f32, 1.0_f32) * 32767.0) as i16;
                 result.push(i16_sample);
             }
@@ -266,11 +268,14 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
 
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+        // Interleave channels
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 let i16_sample: i16 = (sample.clamp(-1.0_f64, 1.0_f64) * 32767.0) as i16;
                 result.push(i16_sample);
             }
@@ -284,12 +289,15 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
-
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
         let max_val = i32::MAX as f64;
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+
+        // Interleave channels
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 let sample_f64 = sample as f64 / max_val;
                 let i16_sample = (sample_f64.clamp(-1.0, 1.0) * 32767.0) as i16;
                 result.push(i16_sample);
@@ -304,11 +312,14 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
 
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+        // Interleave channels
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 result.push(sample);
             }
         }
@@ -321,11 +332,14 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
 
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+        // Interleave channels
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 // i8 ranges from -128 to 127
                 let sample_f32 = sample as f32 / 128.0;
                 let i16_sample = (sample_f32.clamp(-1.0, 1.0) * 32767.0) as i16;
@@ -341,11 +355,14 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
 
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+        // Interleave channels
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 // i24 stores samples as i32 with values scaled by 256
                 let inner_val = sample.0;
                 let sample_f64 = inner_val as f64 / (i32::MAX as f64 / 256.0);
@@ -362,11 +379,14 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
 
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+        // Interleave channels
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 // U8 ranges from 0-255, center at 128
                 let sample_f32 = (sample as f32 - 128.0) / 128.0;
                 let i16_sample = (sample_f32.clamp(-1.0, 1.0) * 32767.0) as i16;
@@ -382,11 +402,14 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
 
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+        // Interleave channels
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 // U16 ranges from 0-65535, center at 32768
                 let sample_f32 = (sample as f32 - 32768.0) / 32768.0;
                 let i16_sample = (sample_f32.clamp(-1.0, 1.0) * 32767.0) as i16;
@@ -402,11 +425,14 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
 
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+        // Interleave channels
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 // u24 stores samples as u32 with values scaled by 256
                 let inner_val = sample.0;
                 let max_val = (u32::MAX >> 8) as f64;
@@ -424,11 +450,14 @@ impl SymphoniaDecoder {
         let channels = spec.channels.count();
         let planes = buf.planes();
 
-        let mut result = Vec::new();
+        let len = planes.planes()[0].len();
+        let mut result = Vec::with_capacity(len * channels);
 
-        for plane_idx in 0..channels {
-            let plane = &planes.planes()[plane_idx];
-            for &sample in plane.iter() {
+        // Interleave channels
+        for sample_idx in 0..len {
+            for plane_idx in 0..channels {
+                let plane = &planes.planes()[plane_idx];
+                let sample = plane[sample_idx];
                 let max_val = u32::MAX as f64;
                 let sample_f64 = (sample as f64 - max_val / 2.0) / (max_val / 2.0);
                 let i16_sample = (sample_f64.clamp(-1.0, 1.0) * 32767.0) as i16;
