@@ -1,10 +1,11 @@
-//! LUFS Generator for Android - Pure Rust
+//! LUFS Generator - Pure Rust
 //! Calculates LUFS (Loudness Units Full Scale) for audio files
 //!
-//! Usage on Android:
-//! adb push lufsgen /data/local/tmp/
-//! adb shell chmod 755 /data/local/tmp/lufsgen
-//! adb shell /data/local/tmp/lufsgen /sdcard/music.mp3
+//! Cross-platform binary that works on Linux, macOS, Windows, Android, and more.
+//!
+//! Usage:
+//!   lufsgen song.mp3              # Single file
+//!   lufsgen /path/to/Music        # Directory scan
 
 use std::env;
 use std::path::Path;
@@ -208,7 +209,7 @@ fn write_results(results: &[LufsResult], output_path: &str) -> std::io::Result<(
 
 /// Print usage information
 fn print_usage() {
-    println!("LUFS Generator for Android (Pure Rust)");
+    println!("LUFS Generator (Pure Rust)");
     println!();
     println!("Usage:");
     println!("  lufsgen <audio-file>          Calculate LUFS for a single file");
@@ -216,8 +217,10 @@ fn print_usage() {
     println!("  lufsgen <file/dir> <output>   Save results to file");
     println!();
     println!("Examples:");
+    println!("  lufsgen song.mp3");
+    println!("  lufsgen ~/Music");
+    println!("  # On Android:");
     println!("  adb shell /data/local/tmp/lufsgen /sdcard/music.mp3");
-    println!("  adb shell /data/local/tmp/lufsgen /sdcard/Music");
     println!();
 }
 

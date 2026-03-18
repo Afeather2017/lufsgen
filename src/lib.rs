@@ -1,14 +1,16 @@
-//! LUFS Generator Library for Android
+//! LUFS Generator Library
 //!
 //! A memory-efficient streaming LUFS (Loudness Units Full Scale) calculator
 //! that processes audio chunk-by-chunk without loading entire files into memory.
 //!
 //! # Features
 //!
+//! - Cross-platform: pure Rust, runs on Linux, macOS, Windows, Android, and more
 //! - Streaming audio decoders for MP3, OGG, WAV, FLAC, AAC, M4A, and MP4 formats
 //! - Automatic format detection from stream content (magic bytes)
 //! - Memory-efficient chunk-based processing
 //! - EBU R128 compliant loudness measurement
+//! - Flexible input: accepts any `Read + Seek` source for custom file access
 //!
 //! # Example
 //!
